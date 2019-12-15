@@ -4,9 +4,13 @@ version = "0.1.0"
 authors = ["Tristan King <tristan.king@gmail.com>"]
 edition = "2018"
 
-# [lib]
-# name = "common"
-# path = "common.rs"
+[dependencies]
+itertools = "*"
+crossbeam = "*"
+
+[lib]
+name = "intcode"
+path = "intcode.rs"
 
 [[bin]]
 name = "day_01"
@@ -31,3 +35,8 @@ path = "day_05.rs"
 [[bin]]
 name = "day_06"
 path = "day_06.rs"
+
+[[bin]]
+name = "day_07"
+path = "day_07.rs"
+
