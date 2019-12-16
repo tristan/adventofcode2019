@@ -1,5 +1,4 @@
 use itertools::Itertools;
-use crossbeam::crossbeam_channel::{RecvError, SendError, unbounded as channel};
 use std::thread;
 
 use intcode;
@@ -7,8 +6,6 @@ use intcode;
 #[derive(Debug)]
 enum Error {
     IntCodeError(intcode::Error),
-    RecvError(RecvError),
-    SendError(SendError<isize>),
     NoResults
 }
 
@@ -18,51 +15,42 @@ impl From<intcode::Error> for Error {
     }
 }
 
-impl From<RecvError> for Error {
-    fn from(err: RecvError) -> Error {
-        Error::RecvError(err)
-    }
-}
-
-impl From<SendError<isize>> for Error {
-    fn from(err: SendError<isize>) -> Error {
-        Error::SendError(err)
-    }
-}
-
 fn run_amplifiers(program: &[isize], phases: &[isize]) -> Result<isize, Error> {
-    let (sender_a, receiver_a) = channel();
-    let (sender_b, receiver_b) = channel();
-    let (sender_c, receiver_c) = channel();
-    let (sender_d, receiver_d) = channel();
-    let (sender_e, receiver_e) = channel();
-    let (sender_f, receiver_f) = channel();
+    let stream_a = intcode::DataStream::new();
+    let stream_b = intcode::DataStream::new();
+    let stream_c = intcode::DataStream::new();
+    let stream_d = intcode::DataStream::new();
+    let stream_e = intcode::DataStream::new();
+    let stream_f = intcode::DataStream::new();
 
-    sender_a.send(phases[0])?;
-    sender_a.send(0)?;
-    sender_b.send(phases[1])?;
-    sender_c.send(phases[2])?;
-    sender_d.send(phases[3])?;
-    sender_e.send(phases[4])?;
+    stream_a.send(phases[0])?;
+    stream_a.send(0)?;
+    stream_b.send(phases[1])?;
+    stream_c.send(phases[2])?;
+    stream_d.send(phases[3])?;
+    stream_e.send(phases[4])?;
 
-    let mut amp_a = intcode::IntcodeComputer::new(&program, receiver_a.clone(), sender_b);
-    let mut amp_b = intcode::IntcodeComputer::new(&program, receiver_b, sender_c);
-    let mut amp_c = intcode::IntcodeComputer::new(&program, receiver_c, sender_d);
-    let mut amp_d = intcode::IntcodeComputer::new(&program, receiver_d, sender_e);
-    let mut amp_e = intcode::IntcodeComputer::new(&program, receiver_e, sender_f.clone());
+    let mut amp_a = intcode::IntcodeComputer::new_with_streams(&program, stream_a.clone(), stream_b.clone());
+    let mut amp_b = intcode::IntcodeComputer::new_with_streams(&program, stream_b.clone(), stream_c.clone());
+    let mut amp_c = intcode::IntcodeComputer::new_with_streams(&program, stream_c.clone(), stream_d.clone());
+    let mut amp_d = intcode::IntcodeComputer::new_with_streams(&program, stream_d.clone(), stream_e.clone());
+    let mut amp_e = intcode::IntcodeComputer::new_with_streams(&program, stream_e.clone(), stream_f.clone());
 
     let thread_a: thread::JoinHandle<Result<(), Error>> = thread::spawn(move || Ok(amp_a.run()?));
     let thread_b: thread::JoinHandle<Result<(), Error>> = thread::spawn(move || Ok(amp_b.run()?));
     let thread_c: thread::JoinHandle<Result<(), Error>> = thread::spawn(move || Ok(amp_c.run()?));
     let thread_d: thread::JoinHandle<Result<(), Error>> = thread::spawn(move || Ok(amp_d.run()?));
     let thread_e: thread::JoinHandle<Result<(), Error>> = thread::spawn(move || Ok(amp_e.run()?));
-    let _feedback: thread::JoinHandle<Result<(), Error>>  = thread::spawn(move || {
-        // @TODO: shutdown this thread ?....
-        loop {
-            let result = receiver_f.recv()?;
-            sender_a.send(result)?;
-        }
-    });
+    {
+        let stream_a = stream_a.clone();
+        let _feedback: thread::JoinHandle<Result<(), Error>>  = thread::spawn(move || {
+            // @TODO: shutdown this thread ?....
+            loop {
+                let result = stream_f.recv()?;
+                stream_a.send(result)?;
+            }
+        });
+    }
 
     thread_a.join().unwrap()?;
     thread_b.join().unwrap()?;
@@ -72,7 +60,7 @@ fn run_amplifiers(program: &[isize], phases: &[isize]) -> Result<isize, Error> {
 
     // feedback thread sent this to a, but a should be halted
     // so we should be able to recv it
-    let result = receiver_a.recv()?;
+    let result = stream_a.recv()?;
     Ok(result)
 }
 

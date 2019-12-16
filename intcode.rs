@@ -2,7 +2,7 @@ use std::fs;
 use std::io;
 use std::num;
 use std::convert::TryInto;
-use crossbeam::crossbeam_channel::{Receiver, Sender, RecvError, SendError};
+use crossbeam::crossbeam_channel::{Receiver, Sender, RecvError, SendError, TryIter, unbounded as channel};
 
 #[derive(Debug)]
 pub enum Error {
@@ -12,6 +12,7 @@ pub enum Error {
     RecvError(RecvError),
     SendError(SendError<isize>),
     BadValueAtPosition(usize),
+    InvalidParameterMode(isize),
     //IndexOutOfBounds(isize)
 }
 
@@ -27,24 +28,72 @@ impl From<num::ParseIntError> for Error {
     }
 }
 
+impl From<RecvError> for Error {
+    fn from(err: RecvError) -> Error {
+        Error::RecvError(err)
+    }
+}
+
+impl From<SendError<isize>> for Error {
+    fn from(err: SendError<isize>) -> Error {
+        Error::SendError(err)
+    }
+}
+
 pub fn read_program(program: &str) -> Result<Vec<isize>, Error> {
     fs::read_to_string(&program)?.split(",").map(|x| {
         Ok(x.trim().parse::<isize>()?)
     }).collect()
 }
 
+#[derive(Clone)]
+pub struct DataStream(Sender<isize>, Receiver<isize>);
+
+impl DataStream {
+    pub fn new() -> DataStream {
+        let (sender, receiver) = channel();
+        DataStream(sender, receiver)
+    }
+
+    pub fn send(&self, input: isize) -> Result<(), Error> {
+        Ok(self.0.send(input)?)
+    }
+
+    pub fn recv(&self) -> Result<isize, Error> {
+        Ok(self.1.recv()?)
+    }
+
+    pub fn try_iter(&self) -> TryIter<isize> {
+        self.1.try_iter()
+    }
+}
+
 pub struct IntcodeComputer {
     pc: usize,
     mem: Vec<isize>,
-    pub input: Receiver<isize>,
-    pub output: Sender<isize>
+    relbase: isize,
+    input: DataStream,
+    output: DataStream
 }
 
 impl IntcodeComputer {
-    pub fn new(mem: &[isize], input: Receiver<isize>, output: Sender<isize>) -> IntcodeComputer {
+    pub fn new_with_streams(mem: &[isize], input: DataStream, output: DataStream) -> IntcodeComputer {
         IntcodeComputer {
             mem: mem.to_vec(),
             pc: 0,
+            relbase: 0,
+            input,
+            output
+        }
+    }
+
+    pub fn new(mem: &[isize]) -> IntcodeComputer {
+        let input = DataStream::new();
+        let output = DataStream::new();
+        IntcodeComputer {
+            mem: mem.to_vec(),
+            pc: 0,
+            relbase: 0,
             input,
             output
         }
@@ -60,14 +109,64 @@ impl IntcodeComputer {
         Ok(())
     }
 
-    pub fn get_param(&self, pos: usize) -> isize {
+    fn get_pos(&self, pos: usize) -> Result<usize, Error> {
         let code = self.mem[self.pc];
         let mode = (code / 10_isize.pow(pos as u32 + 2)) % 10;
         if mode == 0 {
-            let in_pos = self.mem[self.pc + pos + 1] as usize;
-            self.mem[in_pos]
+            Ok(self.mem[self.pc + pos + 1] as usize)
+        } else if mode == 1 {
+            Err(Error::InvalidParameterMode(mode))
+        } else if mode == 2 {
+            Ok((self.relbase + self.mem[self.pc + pos + 1]) as usize)
         } else {
-            self.mem[self.pc + pos + 1]
+            Err(Error::InvalidParameterMode(mode))
+        }
+    }
+
+    fn get_param(&self, pos: usize) -> Result<isize, Error> {
+        let code = self.mem[self.pc];
+        let mode = (code / 10_isize.pow(pos as u32 + 2)) % 10;
+        let pos = if mode == 0 {
+            self.mem[self.pc + pos + 1] as usize
+        } else if mode == 1 {
+            return Ok(self.mem[self.pc + pos + 1]);
+        } else if mode == 2 {
+            (self.relbase + self.mem[self.pc + pos + 1]) as usize
+        } else {
+            return Err(Error::InvalidParameterMode(mode));
+        };
+        if pos >= self.mem.len() {
+            Ok(0)
+        } else {
+            Ok(self.mem[pos])
+        }
+    }
+
+    fn set_mem(&mut self, pos: usize, value: isize) {
+        if pos >= self.mem.len() {
+            self.mem.resize(pos + 1, 0);
+        }
+        self.mem[pos] = value;
+    }
+
+    pub fn send(&self, input: isize) -> Result<(), Error> {
+        self.input.send(input)
+    }
+
+    pub fn recv(&self) -> Result<isize, Error> {
+        self.output.recv()
+    }
+
+    pub fn output_iter(&self) -> TryIter<isize> {
+        self.output.try_iter()
+    }
+}
+
+macro_rules! opt_err {
+    ($param:expr) => {
+        match $param {
+            Ok(v) => v,
+            Err(e) => return Some(Err(e))
         }
     }
 }
@@ -83,33 +182,30 @@ impl Iterator for IntcodeComputer {
 
         match opcode {
             1 => {
-                let out_pos = self.mem[self.pc + 3] as usize;
-                self.mem[out_pos] = self.get_param(0) + self.get_param(1);
+                let out_pos = opt_err!(self.get_pos(2)) as usize;
+                self.set_mem(out_pos, opt_err!(self.get_param(0)) + opt_err!(self.get_param(1)));
                 self.pc += 4;
             },
             2 => {
-                let out_pos = self.mem[self.pc + 3] as usize;
-                self.mem[out_pos] = self.get_param(0) * self.get_param(1);
+                let out_pos = opt_err!(self.get_pos(2)) as usize;
+                self.set_mem(out_pos, opt_err!(self.get_param(0)) * opt_err!(self.get_param(1)));
                 self.pc += 4;
             },
             3 => {
-                let out_pos = self.mem[self.pc + 1] as usize;
-                self.mem[out_pos] = match self.input.recv() {
+                let out_pos = opt_err!(self.get_pos(0)) as usize;
+                self.set_mem(out_pos, match self.input.recv() {
                     Ok(v) => v,
-                    Err(e) => return Some(Err(Error::RecvError(e)))
-                };
+                    Err(e) => return Some(Err(e))
+                });
                 self.pc += 2;
             },
             4 => {
-                match self.output.send(self.get_param(0)) {
-                    Ok(_) => (),
-                    Err(e) => return Some(Err(Error::SendError(e)))
-                }
+                opt_err!(self.output.send(opt_err!(self.get_param(0))));
                 self.pc += 2;
             },
             5 => {
-                if self.get_param(0) != 0 {
-                    self.pc = match self.get_param(1).try_into() {
+                if opt_err!(self.get_param(0)) != 0 {
+                    self.pc = match opt_err!(self.get_param(1)).try_into() {
                         Ok(v) => v,
                         Err(_) => return Some(Err(Error::BadValueAtPosition(self.pc)))
                     };
@@ -118,8 +214,8 @@ impl Iterator for IntcodeComputer {
                 }
             },
             6 => {
-                if self.get_param(0) == 0 {
-                    self.pc = match self.get_param(1).try_into() {
+                if opt_err!(self.get_param(0)) == 0 {
+                    self.pc = match opt_err!(self.get_param(1)).try_into() {
                         Ok(v) => v,
                         Err(_) => return Some(Err(Error::BadValueAtPosition(self.pc)))
                     };
@@ -128,22 +224,26 @@ impl Iterator for IntcodeComputer {
                 }
             },
             7 => {
-                let out_pos = self.mem[self.pc + 3] as usize;
-                self.mem[out_pos] = if self.get_param(0) < self.get_param(1) {
+                let out_pos = opt_err!(self.get_pos(2)) as usize;
+                self.set_mem(out_pos, if opt_err!(self.get_param(0)) < opt_err!(self.get_param(1)) {
                     1
                 }  else {
                     0
-                };
+                });
                 self.pc += 4;
             },
             8 => {
-                let out_pos = self.mem[self.pc + 3] as usize;
-                self.mem[out_pos] = if self.get_param(0) == self.get_param(1) {
+                let out_pos = opt_err!(self.get_pos(2)) as usize;
+                self.set_mem(out_pos, if opt_err!(self.get_param(0)) == opt_err!(self.get_param(1)) {
                     1
                 }  else {
                     0
-                };
+                });
                 self.pc += 4;
+            },
+            9 => {
+                self.relbase += opt_err!(self.get_param(0));
+                self.pc += 2;
             },
             99 => return None,
             _ => return Some(Err(Error::InvalidOpcode(opcode)))
