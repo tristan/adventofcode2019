@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use std::thread;
 
-use intcode;
+use intcode::{self, Signal};
 
 #[derive(Debug)]
 enum Error {
@@ -23,12 +23,12 @@ fn run_amplifiers(program: &[isize], phases: &[isize]) -> Result<isize, Error> {
     let stream_e = intcode::DataStream::new();
     let stream_f = intcode::DataStream::new();
 
-    stream_a.send(phases[0])?;
-    stream_a.send(0)?;
-    stream_b.send(phases[1])?;
-    stream_c.send(phases[2])?;
-    stream_d.send(phases[3])?;
-    stream_e.send(phases[4])?;
+    stream_a.send(Signal::Value(phases[0]))?;
+    stream_a.send(Signal::Value(0))?;
+    stream_b.send(Signal::Value(phases[1]))?;
+    stream_c.send(Signal::Value(phases[2]))?;
+    stream_d.send(Signal::Value(phases[3]))?;
+    stream_e.send(Signal::Value(phases[4]))?;
 
     let mut amp_a = intcode::IntcodeComputer::new_with_streams(&program, stream_a.clone(), stream_b.clone());
     let mut amp_b = intcode::IntcodeComputer::new_with_streams(&program, stream_b.clone(), stream_c.clone());
@@ -41,16 +41,20 @@ fn run_amplifiers(program: &[isize], phases: &[isize]) -> Result<isize, Error> {
     let thread_c: thread::JoinHandle<Result<(), Error>> = thread::spawn(move || Ok(amp_c.run()?));
     let thread_d: thread::JoinHandle<Result<(), Error>> = thread::spawn(move || Ok(amp_d.run()?));
     let thread_e: thread::JoinHandle<Result<(), Error>> = thread::spawn(move || Ok(amp_e.run()?));
-    {
+    let feedback: thread::JoinHandle<Result<Option<isize>, Error>> = {
         let stream_a = stream_a.clone();
-        let _feedback: thread::JoinHandle<Result<(), Error>>  = thread::spawn(move || {
-            // @TODO: shutdown this thread ?....
+        thread::spawn(move || {
+            let mut last = None;
             loop {
-                let result = stream_f.recv()?;
-                stream_a.send(result)?;
+                let result = match stream_f.recv()? {
+                    Signal::Value(v) => v,
+                    Signal::Exiting => return Ok(last)
+                };
+                last = Some(result);
+                stream_a.send(Signal::Value(result))?;
             }
-        });
-    }
+        })
+    };
 
     thread_a.join().unwrap()?;
     thread_b.join().unwrap()?;
@@ -58,10 +62,11 @@ fn run_amplifiers(program: &[isize], phases: &[isize]) -> Result<isize, Error> {
     thread_d.join().unwrap()?;
     thread_e.join().unwrap()?;
 
-    // feedback thread sent this to a, but a should be halted
-    // so we should be able to recv it
-    let result = stream_a.recv()?;
-    Ok(result)
+    let result = feedback.join().unwrap()?;
+    match result {
+        Some(v) => Ok(v),
+        None => Err(Error::NoResults)
+    }
 }
 
 fn find_max_thruster_signal(program: &[isize]) -> Result<isize, Error> {

@@ -10,7 +10,7 @@ pub enum Error {
     ParseIntError(num::ParseIntError),
     InvalidOpcode(isize),
     RecvError(RecvError),
-    SendError(SendError<isize>),
+    SendError(SendError<Signal>),
     BadValueAtPosition(usize),
     InvalidParameterMode(isize),
     //IndexOutOfBounds(isize)
@@ -34,8 +34,8 @@ impl From<RecvError> for Error {
     }
 }
 
-impl From<SendError<isize>> for Error {
-    fn from(err: SendError<isize>) -> Error {
+impl From<SendError<Signal>> for Error {
+    fn from(err: SendError<Signal>) -> Error {
         Error::SendError(err)
     }
 }
@@ -47,7 +47,22 @@ pub fn read_program(program: &str) -> Result<Vec<isize>, Error> {
 }
 
 #[derive(Clone)]
-pub struct DataStream(Sender<isize>, Receiver<isize>);
+pub struct DataStream(Sender<Signal>, Receiver<Signal>);
+
+pub enum Signal {
+    Value(isize),
+    Exiting
+}
+
+impl Signal {
+    pub fn value(self) -> isize {
+        match self {
+            Signal::Value(v) => v,
+            _ => panic!("not a value")
+        }
+    }
+}
+
 
 impl DataStream {
     pub fn new() -> DataStream {
@@ -55,15 +70,15 @@ impl DataStream {
         DataStream(sender, receiver)
     }
 
-    pub fn send(&self, input: isize) -> Result<(), Error> {
+    pub fn send(&self, input: Signal) -> Result<(), Error> {
         Ok(self.0.send(input)?)
     }
 
-    pub fn recv(&self) -> Result<isize, Error> {
+    pub fn recv(&self) -> Result<Signal, Error> {
         Ok(self.1.recv()?)
     }
 
-    pub fn try_iter(&self) -> TryIter<isize> {
+    pub fn try_iter(&self) -> TryIter<Signal> {
         self.1.try_iter()
     }
 }
@@ -90,13 +105,7 @@ impl IntcodeComputer {
     pub fn new(mem: &[isize]) -> IntcodeComputer {
         let input = DataStream::new();
         let output = DataStream::new();
-        IntcodeComputer {
-            mem: mem.to_vec(),
-            pc: 0,
-            relbase: 0,
-            input,
-            output
-        }
+        IntcodeComputer::new_with_streams(mem, input, output)
     }
 
     pub fn run(&mut self) -> Result<(), Error> {
@@ -149,16 +158,19 @@ impl IntcodeComputer {
         self.mem[pos] = value;
     }
 
-    pub fn send(&self, input: isize) -> Result<(), Error> {
+    pub fn send(&self, input: Signal) -> Result<(), Error> {
         self.input.send(input)
     }
 
-    pub fn recv(&self) -> Result<isize, Error> {
+    pub fn recv(&self) -> Result<Signal, Error> {
         self.output.recv()
     }
 
-    pub fn output_iter(&self) -> TryIter<isize> {
-        self.output.try_iter()
+    pub fn output_iter<'a>(&'a self) -> impl Iterator<Item = isize> + 'a {
+        self.output.try_iter().filter_map(|x| match x {
+            Signal::Value(v) => Some(v),
+            _ => None
+        })
     }
 }
 
@@ -194,13 +206,17 @@ impl Iterator for IntcodeComputer {
             3 => {
                 let out_pos = opt_err!(self.get_pos(0)) as usize;
                 self.set_mem(out_pos, match self.input.recv() {
-                    Ok(v) => v,
+                    Ok(v) => match v {
+                        Signal::Value(v) => v,
+                        Signal::Exiting => return None
+                    },
                     Err(e) => return Some(Err(e))
                 });
                 self.pc += 2;
             },
             4 => {
-                opt_err!(self.output.send(opt_err!(self.get_param(0))));
+                let output = opt_err!(self.get_param(0));
+                opt_err!(self.output.send(Signal::Value(output)));
                 self.pc += 2;
             },
             5 => {
@@ -245,7 +261,10 @@ impl Iterator for IntcodeComputer {
                 self.relbase += opt_err!(self.get_param(0));
                 self.pc += 2;
             },
-            99 => return None,
+            99 => {
+                opt_err!(self.output.send(Signal::Exiting));
+                return None;
+            },
             _ => return Some(Err(Error::InvalidOpcode(opcode)))
         }
 

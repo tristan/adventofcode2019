@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{self, BufRead};
+use std::io;
 
 #[derive(Debug)]
 enum Error {

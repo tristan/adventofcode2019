@@ -1,4 +1,4 @@
-use intcode;
+use intcode::{self, Signal};
 
 #[derive(Debug)]
 enum Error {
@@ -11,20 +11,17 @@ impl From<intcode::Error> for Error {
     }
 }
 
-
-
-
 fn main() -> Result<(), Error> {
     let program = intcode::read_program("day_09_input.txt")?;
     println!("Part 1:");
     let mut comp = intcode::IntcodeComputer::new(&program);
-    comp.send(1)?;
+    comp.send(Signal::Value(1))?;
     comp.run()?;
     comp.output_iter().for_each(|output| println!("{}", output));
 
     println!("Part 2:");
     let mut comp = intcode::IntcodeComputer::new(&program);
-    comp.send(2)?;
+    comp.send(Signal::Value(2))?;
     comp.run()?;
     comp.output_iter().for_each(|output| println!("{}", output));
 
@@ -50,7 +47,7 @@ mod test {
         let input = [1102,34915192,34915192,7,4,7,99,0];
         let mut comp = intcode::IntcodeComputer::new(&input);
         comp.run()?;
-        assert_eq!(format!("{}", comp.recv()?).len(), 16);
+        assert_eq!(format!("{}", comp.recv()?.value()).len(), 16);
 
         Ok(())
     }
@@ -60,7 +57,7 @@ mod test {
         let input = [104,1125899906842624,99];
         let mut comp = intcode::IntcodeComputer::new(&input);
         comp.run()?;
-        assert_eq!(comp.recv()?, 1125899906842624);
+        assert_eq!(comp.recv()?.value(), 1125899906842624);
 
         Ok(())
     }

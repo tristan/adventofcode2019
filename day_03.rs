@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{self, BufReader, BufRead};
+use std::io::{self, BufReader};
 use std::num;
 use std::cmp::{max, min};
 
