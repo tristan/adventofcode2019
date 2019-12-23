@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use std::thread;
 
-use intcode::{self, Signal};
+use common::intcode::{self, Signal};
 
 #[derive(Debug)]
 enum Error {

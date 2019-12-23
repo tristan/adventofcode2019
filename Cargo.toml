@@ -7,10 +7,11 @@ edition = "2018"
 [dependencies]
 itertools = "*"
 crossbeam = "*"
+regex = "*"
 
 [lib]
-name = "intcode"
-path = "intcode.rs"
+name = "common"
+path = "common.rs"
 
 [[bin]]
 name = "day_01"
@@ -55,3 +56,7 @@ path = "day_10.rs"
 [[bin]]
 name = "day_11"
 path = "day_11.rs"
+
+[[bin]]
+name = "day_12"
+path = "day_12.rs"

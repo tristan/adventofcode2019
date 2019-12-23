@@ -1,4 +1,4 @@
-use intcode::{self, Signal};
+use common::intcode::{self, Signal};
 
 #[derive(Debug)]
 enum Error {

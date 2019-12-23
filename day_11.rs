@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::thread;
-use intcode::{self, Signal};
+use common::intcode::{self, Signal};
 use std::cmp::{min, max};
 
 #[derive(Debug)]
