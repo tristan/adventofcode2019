@@ -1,4 +1,4 @@
-use common::intcode::{IntcodeComputer, Signal, DataStream, Error, read_program};
+use common::intcode::{IntcodeComputer, Signal, Error, read_program};
 
 fn main() -> Result<(), Error> {
 

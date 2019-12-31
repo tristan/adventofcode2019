@@ -83,9 +83,11 @@ impl DataStream {
     }
 }
 
+#[derive(Clone)]
 pub struct IntcodeComputer {
     pc: usize,
     mem: Vec<isize>,
+    program: Vec<isize>,
     relbase: isize,
     input: DataStream,
     output: DataStream
@@ -95,6 +97,7 @@ impl IntcodeComputer {
     pub fn new_with_streams(mem: &[isize], input: DataStream, output: DataStream) -> IntcodeComputer {
         IntcodeComputer {
             mem: mem.to_vec(),
+            program: mem.to_vec(),
             pc: 0,
             relbase: 0,
             input,
@@ -116,6 +119,16 @@ impl IntcodeComputer {
             }
         }
         Ok(())
+    }
+
+    pub fn reset(&mut self) {
+        let mut i = self.input.1.try_iter();
+        while let Some(_) = i.next() {}
+        let mut i = self.output.1.try_iter();
+        while let Some(_) = i.next() {}
+        self.pc = 0;
+        self.relbase = 0;
+        self.mem = self.program.clone();
     }
 
     fn get_pos(&self, pos: usize) -> Result<usize, Error> {
