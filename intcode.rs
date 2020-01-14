@@ -175,6 +175,13 @@ impl IntcodeComputer {
         self.input.send(input)
     }
 
+    pub fn send_ascii(&self, input: &str) -> Result<(), Error> {
+        for c in input.chars().map(|c| c as isize) {
+            self.input.send(Signal::Value(c))?
+        }
+        Ok(())
+    }
+
     pub fn recv(&self) -> Result<Signal, Error> {
         self.output.recv()
     }
@@ -184,6 +191,13 @@ impl IntcodeComputer {
             Signal::Value(v) => Some(v),
             _ => None
         })
+    }
+
+    pub fn print_output_ascii(&self) {
+        self.output_iter().for_each(|x| match std::char::from_u32(x as u32) {
+            Some(c) => print!("{}", c),
+            None => print!("({})", x)
+        });
     }
 }
 
