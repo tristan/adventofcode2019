@@ -132,6 +132,12 @@ impl IntcodeComputer {
     pub fn send(&mut self, input: isize) {
         self.input.insert(0, input);
     }
+
+    pub fn send_ascii(&mut self, input: &str) {
+        let mut input = input.chars().map(|c| c as isize).rev().collect::<Vec<_>>();
+        input.append(&mut self.input);
+        self.input = input;
+    }
 }
 
 macro_rules! opt_err {
